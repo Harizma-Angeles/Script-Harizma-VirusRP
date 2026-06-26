@@ -1,4 +1,4 @@
--- HARIZMA CYBER HUB [ESP & FOV FIXED VERSION + CHAT ESP]
+-- HARIZMA CYBER HUB [ESP & FOV FIXED VERSION]
 
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait() or Players.LocalPlayer
@@ -21,7 +21,7 @@ local camera = Workspace.CurrentCamera
 -- Состояния хаба
 local espEnabled, espShowName, espShowDist, espShowRole, espShowHp = false, false, false, false, false
 local aimbotEnabled, fovRadius, aimSmoothness = false, 150, 0.15
-local chatEspEnabled = false -- Переменная для Chat ESP
+local chatEspEnabled = false
 local aimButton = Enum.UserInputType.MouseButton2
 local noclipEnabled, speedEnabled, speedValue, infJumpEnabled = false, false, 16, false
 local flyEnabled, flySpeed = false, 50
@@ -33,11 +33,11 @@ local themeColor = Color3.fromRGB(0, 255, 200)
 local menuTransparency, buttonTransparency = 0, 0
 local currentColor = themeColor 
 
-local savedBinds = { ["esp"] = Enum.KeyCode.X, ["aimbot"] = Enum.KeyCode.V, ["noclip"] = Enum.KeyCode.C, ["fly"] = Enum.KeyCode.F }
+local savedBinds = { ["esp"] = Enum.KeyCode.X, ["aimbot"] = Enum.KeyCode.V, ["noclip"] = Enum.KeyCode.C, ["fly"] = Enum.KeyCode.F, ["chat"] = nil }
 local registryUiToggles, currentlyBinding = {}, nil
 local ADMIN_KEYWORDS = {"admin", "mod", "owner", "creator", "dev", "moderator"} 
 
--- Логика Chat ESP
+-- Chat ESP Function
 local function showChatBubble(player, message)
     if not player.Character or not player.Character:FindFirstChild("Head") then return end
     local billboard = Instance.new("BillboardGui")
@@ -58,12 +58,8 @@ local function showChatBubble(player, message)
     task.delay(4, function() billboard:Destroy() end)
 end
 
-Players.PlayerAdded:Connect(function(p)
-    p.Chatted:Connect(function(msg) if chatEspEnabled then showChatBubble(p, msg) end end)
-end)
-for _, p in pairs(Players:GetPlayers()) do
-    p.Chatted:Connect(function(msg) if chatEspEnabled then showChatBubble(p, msg) end end)
-end
+Players.PlayerAdded:Connect(function(p) p.Chatted:Connect(function(msg) if chatEspEnabled then showChatBubble(p, msg) end end) end)
+for _, p in pairs(Players:GetPlayers()) do p.Chatted:Connect(function(msg) if chatEspEnabled then showChatBubble(p, msg) end end) end
 
 -- Отрисовка FOV круга
 local fovCircle = nil
@@ -111,7 +107,7 @@ local function makeDraggable(frame)
     end) 
 end 
 
--- Продвинутое создание ESP
+-- ESP
 local function createEspElements(character)
     if not character or character == localPlayer.Character then return end
     local player = Players:GetPlayerFromCharacter(character)
@@ -198,11 +194,14 @@ RunService.RenderStepped:Connect(function(dt)
     if aimbotEnabled and UserInputService:IsMouseButtonPressed(aimButton) then 
         local closestPlayer, shortestDistance = nil, fovRadius 
         for _, p in ipairs(Players:GetPlayers()) do 
-            if p ~= localPlayer and p.Character and p.Character:FindFirstChild("Head") then 
-                local pos, onScreen = camera:WorldToViewportPoint(p.Character.Head.Position) 
-                if onScreen then 
-                    local dist = (Vector2.new(pos.X, pos.Y) - UserInputService:GetMouseLocation()).Magnitude 
-                    if dist < shortestDistance then shortestDistance = dist closestPlayer = p.Character end 
+            if p ~= localPlayer and p.Character then 
+                local head = p.Character:FindFirstChild("Head")
+                if head then 
+                    local pos, onScreen = camera:WorldToViewportPoint(head.Position) 
+                    if onScreen then 
+                        local dist = (Vector2.new(pos.X, pos.Y) - UserInputService:GetMouseLocation()).Magnitude 
+                        if dist < shortestDistance then shortestDistance = dist closestPlayer = p.Character end 
+                    end 
                 end 
             end 
         end 
@@ -229,6 +228,11 @@ RunService.Stepped:Connect(function()
 end) 
 
 UserInputService.InputBegan:Connect(function(i, gp)
+    if currentlyBinding then
+        if i.KeyCode == Enum.KeyCode.Backspace then savedBinds[currentlyBinding] = nil
+        elseif i.KeyCode ~= Enum.KeyCode.Escape then savedBinds[currentlyBinding] = i.KeyCode end
+        currentlyBinding = nil return
+    end
     if gp or not flyEnabled then return end
     if i.KeyCode == Enum.KeyCode.W then flyDirections.Forward = 1 elseif i.KeyCode == Enum.KeyCode.S then flyDirections.Backward = 1 elseif i.KeyCode == Enum.KeyCode.A then flyDirections.Left = 1 elseif i.KeyCode == Enum.KeyCode.D then flyDirections.Right = 1 elseif i.KeyCode == Enum.KeyCode.Space then flyDirections.Up = 1 elseif i.KeyCode == Enum.KeyCode.LeftShift then flyDirections.Down = 1 end
 end)
@@ -251,20 +255,29 @@ for i, name in ipairs(tabs) do
     btn.MouseButton1Click:Connect(function() for _, frame in pairs(frames) do frame.Visible = false end f.Visible = true end)
 end
 
-local function createToggle(parent, text, y, callback)
-    local btn = Instance.new("TextButton", parent) btn.Size = UDim2.new(0, 200, 0, 30) btn.Position = UDim2.new(0, 10, 0, y) btn.Text = text
+local function createToggle(parent, text, y, featureId, callback)
+    local frame = Instance.new("Frame", parent) frame.Size = UDim2.new(1, 0, 0, 36) frame.Position = UDim2.new(0, 0, 0, y) frame.BackgroundTransparency = 1
+    local btn = Instance.new("TextButton", frame) btn.Size = UDim2.new(0, 44, 0, 22) btn.Position = UDim2.new(1, -52, 0, 7) btn.BackgroundColor3 = Color3.fromRGB(231, 76, 60) btn.Text = ""
     local state = false btn.MouseButton1Click:Connect(function() state = not state callback(state) btn.BackgroundColor3 = state and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(231, 76, 60) end)
+    Instance.new("TextLabel", frame).Text = text Instance.new("TextLabel", frame).Position = UDim2.new(0, 10, 0, 0) Instance.new("TextLabel", frame).Size = UDim2.new(0, 200, 1, 0)
+    if featureId then
+        local b = Instance.new("TextButton", frame) b.Size = UDim2.new(0, 50, 0, 22) b.Position = UDim2.new(1, -112, 0, 7) b.Text = "..."
+        b.MouseButton1Click:Connect(function() currentlyBinding = featureId b.Text = "Press key" end)
+        task.spawn(function() while task.wait(0.3) do if currentlyBinding ~= featureId then b.Text = savedBinds[featureId] and savedBinds[featureId].Name or "None" end end end)
+    end
 end
 
-createToggle(frames["ESP"], "Включить ESP", 10, function(v) espEnabled = v end)
-createToggle(frames["ESP"], "Показывать Имена", 45, function(v) espShowName = v end)
-createToggle(frames["ESP"], "Показывать Дистанцию", 80, function(v) espShowDist = v end)
-createToggle(frames["ESP"], "Показывать Команду", 115, function(v) espShowRole = v end)
-createToggle(frames["ESP"], "Показывать HP", 150, function(v) espShowHp = v end)
-createToggle(frames["AIMBOT"], "Аимбот", 10, function(v) aimbotEnabled = v end)
-createToggle(frames["ЧАТ"], "Показ сообщений", 10, function(v) chatEspEnabled = v end)
-createToggle(frames["FUN"], "Ноуклип", 10, function(v) noclipEnabled = v end)
-createToggle(frames["FUN"], "Спидхак", 45, function(v) speedEnabled = v end)
-createToggle(frames["FUN"], "Полет", 80, function(v) flyEnabled = v end)
+createToggle(frames["ESP"], "ESP", 10, "esp", function(v) espEnabled = v end)
+createToggle(frames["ESP"], "Имена", 45, nil, function(v) espShowName = v end)
+createToggle(frames["ESP"], "Дистанция", 80, nil, function(v) espShowDist = v end)
+createToggle(frames["ESP"], "Роли", 115, nil, function(v) espShowRole = v end)
+createToggle(frames["ESP"], "HP", 150, nil, function(v) espShowHp = v end)
+createToggle(frames["AIMBOT"], "Аимбот", 10, "aimbot", function(v) aimbotEnabled = v end)
+createToggle(frames["ЧАТ"], "Показ сообщений", 10, "chat", function(v) chatEspEnabled = v end)
+createToggle(frames["FUN"], "Ноуклип", 10, "noclip", function(v) noclipEnabled = v end)
+createToggle(frames["FUN"], "Спидхак", 45, nil, function(v) speedEnabled = v end)
+createToggle(frames["FUN"], "Полет", 80, "fly", function(v) flyEnabled = v end)
 
 UserInputService.InputBegan:Connect(function(i, gp) if not gp and i.KeyCode == Enum.KeyCode.Insert then mainHub.Visible = not mainHub.Visible end end)
+
+toggleMenuState()
