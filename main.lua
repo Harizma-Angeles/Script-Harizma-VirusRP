@@ -1,30 +1,30 @@
--- Безопасный поиск контейнера для UI
+-- HARIZMA CYBER HUB [ESP & FOV FIXED VERSION]
+
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait() or Players.LocalPlayer
+
 local success, coreGui = pcall(function() return game:GetService("CoreGui") end)
-if not success or not coreGui then coreGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+if not success or not coreGui then 
+    coreGui = localPlayer:WaitForChild("PlayerGui") 
+end
 
--- Удаление старой копии
-if coreGui:FindFirstChild("HarizmaCyberHub") then coreGui.HarizmaCyberHub:Destroy() end
+if coreGui:FindFirstChild("HarizmaCyberHub") then 
+    coreGui.HarizmaCyberHub:Destroy() 
+end
 
-local Players = game:GetService("Players") 
 local RunService = game:GetService("RunService") 
 local UserInputService = game:GetService("UserInputService") 
 local TweenService = game:GetService("TweenService") 
 local Workspace = game:GetService("Workspace") 
 local camera = Workspace.CurrentCamera 
-local lp = Players.LocalPlayer
 
 -- Состояния хаба
 local espEnabled, espShowName, espShowDist, espShowRole, espShowHp = false, false, false, false, false
-local aimbotEnabled, fovRadius, aimSmoothness, fovRgb = false, 150, 0.15, false
-local fovColor = Color3.fromRGB(0, 255, 200)
+local aimbotEnabled, fovRadius, aimSmoothness = false, 150, 0.15
 local aimButton = Enum.UserInputType.MouseButton2
 local noclipEnabled, speedEnabled, speedValue, infJumpEnabled = false, false, 16, false
-
 local flyEnabled, flySpeed = false, 50
 local flyDirections = {Forward = 0, Backward = 0, Left = 0, Right = 0, Up = 0, Down = 0}
-local flyConnection = nil
-
-local invisibilityEnabled, antiCuffs, antiBaton = false, false, false
 local menuVisible = false 
 
 -- Кастомизация темы
@@ -36,7 +36,7 @@ local savedBinds = { ["esp"] = Enum.KeyCode.X, ["aimbot"] = Enum.KeyCode.V, ["no
 local registryUiToggles, currentlyBinding = {}, nil
 local ADMIN_KEYWORDS = {"admin", "mod", "owner", "creator", "dev", "moderator"} 
 
--- Отрисовка FOV круга (Обернуто в pcall для Xeno)
+-- Отрисовка FOV круга
 local fovCircle = nil
 pcall(function()
     if Drawing and Drawing.new then
@@ -50,68 +50,199 @@ pcall(function()
     end
 end)
 
-RunService.RenderStepped:Connect(function() 
-    currentColor = Color3.fromHSV((tick() % 4) / 4, 0.9, 1) 
-end) 
-
 local function isAdmin(player) 
-    if player == lp then return false end 
+    if player == localPlayer then return false end 
     local n, d = player.Name:lower(), player.DisplayName:lower() 
     for _, k in ipairs(ADMIN_KEYWORDS) do if n:find(k) or d:find(k) then return true end end 
     return false 
 end 
 
--- Безопасный Анти-Баттон и Анти-Куфф без метатаблиц
-task.spawn(function()
-    while task.wait(0.5) do
-        pcall(function()
-            if antiCuffs and lp.Character then
-                local hum = lp.Character:FindFirstChildOfClass("Humanoid")
-                if hum and (hum.PlatformStand or hum.Sit) then 
-                    hum.PlatformStand = false 
-                    hum.Sit = false 
-                end
-                for _, v in ipairs(lp.Character:GetDescendants()) do
-                    if v:IsA("Weld") and (v.Name:lower():find("cuff") or v.Parent.Name:lower():find("cuff")) then
-                        v:Destroy()
-                    end
-                end
-            end
-        end)
-    end
-end)
-
 UserInputService.JumpRequest:Connect(function()
-    if infJumpEnabled and lp.Character then
-        local hum = lp.Character:FindFirstChildOfClass("Humanoid")
+    if infJumpEnabled and localPlayer.Character then
+        local hum = localPlayer.Character:FindFirstChildOfClass("Humanoid")
         if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
     end
 end)
 
--- Легкий CFrame Полет
-local function updateFlyState(state)
-    flyEnabled = state
-    if flyConnection then flyConnection:Disconnect() flyConnection = nil end
-    if not state then return end
+-- Система Драга UI
+local function makeDraggable(frame) 
+    local dragging, dragInput, dragStart, startPos 
+    frame.InputBegan:Connect(function(input) 
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+            dragging = true dragStart = input.Position startPos = frame.Position 
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end) 
+        end 
+    end) 
+    frame.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end end) 
+    UserInputService.InputChanged:Connect(function(input) 
+        if input == dragInput and dragging then 
+            local delta = input.Position - dragStart 
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) 
+        end 
+    end) 
+end 
 
-    flyConnection = RunService.RenderStepped:Connect(function()
-        local char = lp.Character local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        
-        root.AssemblyLinearVelocity = Vector3.zero
-        local camLook = camera.CFrame.LookVector
-        local camRight = camera.CFrame.RightVector
-        local moveVector = Vector3.zero
-        
-        moveVector = moveVector + (camLook * (flyDirections.Forward - flyDirections.Backward))
-        moveVector = moveVector + (camRight * (flyDirections.Right - flyDirections.Left))
-        moveVector = moveVector + (Vector3.new(0, 1, 0) * (flyDirections.Up - flyDirections.Down))
-        
-        if moveVector.Magnitude > 0 then
-            root.CFrame = root.CFrame + (moveVector.Unit * (flySpeed * RunService.RenderStepped:Wait()))
-        end
-    end)
+-- Продвинутое создание ESP (Highlight силуэт + Текст)
+local function createEspElements(character)
+    if not character or character == localPlayer.Character then return end
+    local player = Players:GetPlayerFromCharacter(character)
+    if not player then return end
+
+    -- Силуэт (Highlight)
+    local highlight = character:FindFirstChild("XenoHighlight") or Instance.new("Highlight")
+    highlight.Name = "XenoHighlight"
+    highlight.FillColor = themeColor
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.OutlineTransparency = 0
+    highlight.Adornee = character
+    highlight.Enabled = false
+    highlight.Parent = character
+
+    -- Текстовый контейнер
+    local textTag = character:FindFirstChild("XenoTextTag") or Instance.new("BillboardGui")
+    textTag.Name = "XenoTextTag" 
+    textTag.Size = UDim2.new(0, 200, 0, 80) 
+    textTag.AlwaysOnTop = true 
+    textTag.ExtentsOffset = Vector3.new(0, 3.5, 0)
+    textTag.Enabled = false
+    
+    local lbl = textTag:FindFirstChild("Label") or Instance.new("TextLabel")
+    lbl.Name = "Label" 
+    lbl.Size = UDim2.new(1, 0, 1, 0) 
+    lbl.BackgroundTransparency = 1 
+    lbl.Font = Enum.Font.SourceSansBold 
+    lbl.TextSize = 13 
+    lbl.TextStrokeTransparency = 0.2
+    lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    lbl.Parent = textTag
+    textTag.Parent = character
 end
+
+local function applyEspToAll()
+    for _, p in ipairs(Players:GetPlayers()) do 
+        if p.Character then createEspElements(p.Character) end 
+        p.CharacterAdded:Connect(createEspElements) 
+    end
+end
+applyEspToAll()
+Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createEspElements) end)
+
+-- ЕДИНЫЙ ЦИКЛ ОБНОВЛЕНИЯ
+RunService.RenderStepped:Connect(function(dt)
+    currentColor = Color3.fromHSV((os.clock() % 4) / 4, 0.9, 1) 
+
+    -- Обновление ESP
+    for _, player in ipairs(Players:GetPlayers()) do 
+        local character = player.Character
+        if character and player ~= localPlayer then
+            local highlight = character:FindFirstChild("XenoHighlight")
+            local textTag = character:FindFirstChild("XenoTextTag")
+            local lbl = textTag and textTag:FindFirstChild("Label")
+
+            if not espEnabled then 
+                if highlight then highlight.Enabled = false end
+                if textTag then textTag.Enabled = false end 
+            else
+                local finalColor = themeColor 
+                if isAdmin(player) then finalColor = Color3.fromRGB(255, 50, 50) end 
+
+                if highlight then 
+                    highlight.Enabled = true 
+                    highlight.FillColor = finalColor
+                end
+                
+                if textTag then textTag.Enabled = true end
+
+                if lbl then
+                    local textLines = {} 
+                    if espShowRole then
+                        if isAdmin(player) then 
+                            table.insert(textLines, "[ADMIN]") 
+                        elseif player.Team then
+                            table.insert(textLines, "[" .. player.Team.Name .. "]") -- Показ Команды (Роли)
+                        else
+                            table.insert(textLines, "[No Team]")
+                        end
+                    end 
+                    if espShowName then table.insert(textLines, player.Name) end 
+                    if espShowHp then 
+                        local hum = character:FindFirstChildOfClass("Humanoid") 
+                        if hum then table.insert(textLines, "HP: " .. math.floor(hum.Health)) end 
+                    end 
+                    if espShowDist then 
+                        local root = character:FindFirstChild("HumanoidRootPart") 
+                        local lroot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") 
+                        if root and lroot then table.insert(textLines, "[" .. math.floor((root.Position - lroot.Position).Magnitude) .. "m]") end 
+                    end 
+                    lbl.TextColor3 = finalColor 
+                    lbl.Text = table.concat(textLines, "\n")
+                end
+            end
+        end
+    end 
+
+    -- Логика Аимбота и FOV (Теперь зависит только от включения функции, а не от видимости меню)
+    local mouseLocation = UserInputService:GetMouseLocation() 
+    if fovCircle then
+        fovCircle.Position = mouseLocation 
+        fovCircle.Radius = fovRadius 
+        fovCircle.Visible = aimbotEnabled -- ФИКС: Всегда виден, если аимбот включен
+        fovCircle.Color = themeColor 
+    end
+
+    if aimbotEnabled and UserInputService:IsMouseButtonPressed(aimButton) then 
+        local closestPlayer, shortestDistance = nil, fovRadius 
+        for _, p in ipairs(Players:GetPlayers()) do 
+            if p ~= localPlayer and p.Character then 
+                local head = p.Character:FindFirstChild("Head")
+                if head then 
+                    local pos, onScreen = camera:WorldToViewportPoint(head.Position) 
+                    if onScreen then 
+                        local dist = (Vector2.new(pos.X, pos.Y) - mouseLocation).Magnitude 
+                        if dist < shortestDistance then shortestDistance = dist closestPlayer = p.Character end 
+                    end 
+                end 
+            end 
+        end 
+        if closestPlayer then 
+            local head = closestPlayer:FindFirstChild("Head")
+            if head then
+                camera.CFrame = camera.CFrame:Lerp(CFrame.new(camera.CFrame.Position, head.Position), aimSmoothness) 
+            end
+        end 
+    end 
+
+    -- Логика Полета
+    if flyEnabled and localPlayer.Character then
+        local root = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.AssemblyLinearVelocity = Vector3.zero
+            local moveVector = Vector3.zero
+            moveVector = moveVector + (camera.CFrame.LookVector * (flyDirections.Forward - flyDirections.Backward))
+            moveVector = moveVector + (camera.CFrame.RightVector * (flyDirections.Right - flyDirections.Left))
+            moveVector = moveVector + (Vector3.new(0, 1, 0) * (flyDirections.Up - flyDirections.Down))
+            
+            if moveVector.Magnitude > 0 then
+                root.CFrame = root.CFrame + (moveVector.Unit * (flySpeed * dt))
+            end
+        end
+    end
+
+    -- Логика Спидхака
+    if speedEnabled and localPlayer.Character then 
+        local hum = localPlayer.Character:FindFirstChildOfClass("Humanoid") 
+        if hum then hum.WalkSpeed = speedValue end 
+    end
+end)
+
+RunService.Stepped:Connect(function() 
+    if localPlayer.Character and noclipEnabled then 
+        for _, part in ipairs(localPlayer.Character:GetDescendants()) do 
+            if part:IsA("BasePart") then part.CanCollide = false end 
+        end 
+    end 
+end) 
 
 UserInputService.InputBegan:Connect(function(i, gp)
     if gp or not flyEnabled then return end
@@ -132,142 +263,7 @@ UserInputService.InputEnded:Connect(function(i)
     elseif i.KeyCode == Enum.KeyCode.LeftShift then flyDirections.Down = 0 end
 end)
 
--- Невидимка (Визуальное скрытие)
-local function updateInvisState(state)
-    invisibilityEnabled = state
-    local char = lp.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-            part.Transparency = state and 1 or 0
-        end
-    end
-end
-
--- Система Драга UI
-local function makeDraggable(frame) 
-    local dragging, dragInput, dragStart, startPos 
-    frame.InputBegan:Connect(function(input) 
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then 
-            dragging = true dragStart = input.Position startPos = frame.Position 
-            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end) 
-        end 
-    end) 
-    frame.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end end) 
-    UserInputService.InputChanged:Connect(function(input) 
-        if input == dragInput and dragging then 
-            local delta = input.Position - dragStart 
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) 
-        end 
-    end) 
-end 
-
--- Стабильное 2D ESP без использования крашащих Highlight элементов
-local function createEspElements(character)
-    if not character or character == lp.Character then return end
-    
-    local textTag = character:FindFirstChild("XenoTextTag") or Instance.new("BillboardGui")
-    textTag.Name = "XenoTextTag" 
-    textTag.Size = UDim2.new(0, 200, 0, 60) 
-    textTag.AlwaysOnTop = true 
-    textTag.ExtentsOffset = Vector3.new(0, 3, 0)
-    
-    local lbl = textTag:FindFirstChild("Label") or Instance.new("TextLabel")
-    lbl.Name = "Label" 
-    lbl.Size = UDim2.new(1, 0, 1, 0) 
-    lbl.BackgroundTransparency = 1 
-    lbl.Font = Enum.Font.SourceSansBold 
-    lbl.TextSize = 13 
-    lbl.TextStrokeTransparency = 0.3 
-    lbl.Parent = textTag
-    textTag.Parent = character
-end
-
-for _, p in ipairs(Players:GetPlayers()) do if p.Character then createEspElements(p.Character) end p.CharacterAdded:Connect(createEspElements) end
-Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createEspElements) end)
-
-RunService.RenderStepped:Connect(function() 
-    for _, player in ipairs(Players:GetPlayers()) do 
-        local character = player.Character
-        if not character or player == lp then continue end
-        local textTag = character:FindFirstChild("XenoTextTag")
-        local lbl = textTag and textTag:FindFirstChild("Label")
-
-        if not espEnabled then 
-            if textTag then textTag.Enabled = false end 
-            continue 
-        end 
-
-        if textTag then textTag.Enabled = true end
-        local finalColor = themeColor 
-        if isAdmin(player) then finalColor = Color3.fromRGB(255, 50, 50) end 
-
-        if lbl then
-            local textLines = {} 
-            if espShowRole and isAdmin(player) then table.insert(textLines, "[ADMIN]") end 
-            if espShowName then table.insert(textLines, player.Name) end 
-            if espShowHp then local hum = character:FindFirstChildOfClass("Humanoid") if hum then table.insert(textLines, "HP: " .. math.floor(hum.Health)) end end 
-            if espShowDist then 
-                local root = character:FindFirstChild("HumanoidRootPart") local lroot = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") 
-                if root and lroot then table.insert(textLines, "[" .. math.floor((root.Position - lroot.Position).Magnitude) .. "m]") end 
-            end 
-            lbl.TextColor3 = finalColor 
-            lbl.Text = table.concat(textLines, " ")
-        end
-    end 
-end) 
-
--- Легкий Аимбот
-RunService.RenderStepped:Connect(function() 
-    local mouseLocation = UserInputService:GetMouseLocation() 
-    
-    if fovCircle then
-        fovCircle.Position = mouseLocation 
-        fovCircle.Radius = fovRadius 
-        fovCircle.Visible = (aimbotEnabled and menuVisible) 
-        fovCircle.Color = themeColor 
-    end
-
-    if aimbotEnabled and UserInputService:IsMouseButtonPressed(aimButton) then 
-        local closestPlayer, shortestDistance = nil, fovRadius 
-        for _, p in ipairs(Players:GetPlayers()) do 
-            if p ~= lp and p.Character then 
-                local root = p.Character:FindFirstChild("Head")
-                if root then 
-                    local pos, onScreen = camera:WorldToViewportPoint(root.Position) 
-                    if onScreen then 
-                        local dist = (Vector2.new(pos.X, pos.Y) - mouseLocation).Magnitude 
-                        if dist < shortestDistance then shortestDistance = dist closestPlayer = p.Character end 
-                    end 
-                end 
-            end 
-        end 
-        if closestPlayer then 
-            local root = closestPlayer:FindFirstChild("Head")
-            if root then
-                camera.CFrame = camera.CFrame:Lerp(CFrame.new(camera.CFrame.Position, root.Position), aimSmoothness) 
-            end
-        end 
-    end 
-end) 
-
--- Ноуклип и Спидхак
-RunService.Stepped:Connect(function() 
-    if lp.Character and noclipEnabled then 
-        for _, part in ipairs(lp.Character:GetDescendants()) do 
-            if part:IsA("BasePart") then part.CanCollide = false end 
-        end 
-    end 
-end) 
-
-RunService.RenderStepped:Connect(function() 
-    if speedEnabled and lp.Character then 
-        local hum = lp.Character:FindFirstChildOfClass("Humanoid") 
-        if hum then hum.WalkSpeed = speedValue end 
-    end 
-end) 
-
--- Конструктор UI (Полная совместимость)
+-- КОНСТРУКТОР ИНТЕРФЕЙСА (UI)
 local screenGui = Instance.new("ScreenGui") screenGui.Name = "HarizmaCyberHub" screenGui.ResetOnSpawn = false screenGui.Parent = coreGui 
 local mainHub = Instance.new("Frame") mainHub.Size = UDim2.new(0, 560, 0, 360) mainHub.Position = UDim2.new(0.3, 0, 0.25, 0) mainHub.BackgroundColor3 = Color3.fromRGB(11, 12, 16) mainHub.BorderSizePixel = 0 mainHub.Active = true mainHub.ClipsDescendants = true mainHub.Parent = screenGui 
 Instance.new("UICorner", mainHub).CornerRadius = UDim.new(0, 14) makeDraggable(mainHub) 
@@ -276,7 +272,8 @@ local sidebar = Instance.new("Frame") sidebar.Size = UDim2.new(0, 150, 1, 0) sid
 local menuTitle = Instance.new("TextLabel") menuTitle.Size = UDim2.new(1, 0, 0, 45) menuTitle.Position = UDim2.new(0, 14, 0, 8) menuTitle.BackgroundTransparency = 1 menuTitle.Font = Enum.Font.GothamBold menuTitle.Text = "HARIZMA HACK" menuTitle.TextColor3 = themeColor menuTitle.TextSize = 13 menuTitle.TextXAlignment = Enum.TextXAlignment.Left menuTitle.Parent = sidebar 
 local container = Instance.new("Frame") container.Size = UDim2.new(1, -150, 1, 0) container.Position = UDim2.new(0, 150, 0, 0) container.BackgroundTransparency = 1 container.Parent = mainHub 
 
-local tabs = {"ГЛАВНАЯ", "ESP", "AIMBOT", "FUN", "ПРОЧЕЕ", "НАСТРОЙКИ"} 
+-- ФИКС: Убрана вкладка "ПРОЧЕЕ"
+local tabs = {"ГЛАВНАЯ", "ESP", "AIMBOT", "FUN", "НАСТРОЙКИ"} 
 local frames, tabButtons = {}, {} 
 
 local function createTabButton(name, index) 
@@ -298,7 +295,7 @@ task.spawn(function()
     while task.wait(0.2) do
         pcall(function()
             menuTitle.TextColor3 = themeColor mainHub.BackgroundTransparency = menuTransparency sidebar.BackgroundTransparency = menuTransparency
-            for tName, btn in pairs(tabButtons) do btn.BackgroundTransparency = buttonTransparency if btn.TextColor3 ~= Color3.fromRGB(140, 145, 155) then btn.TextColor3 = themeColor end end
+            for _, btn in pairs(tabButtons) do btn.BackgroundTransparency = buttonTransparency if btn.TextColor3 ~= Color3.fromRGB(140, 145, 155) then btn.TextColor3 = themeColor end end
         end)
     end
 end)
@@ -338,15 +335,15 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     task.spawn(function() while task.wait(0.2) do fill.BackgroundColor3 = themeColor end end)
 end 
 
--- Главный экран
+-- Экраны вкладок
 local home = frames["ГЛАВНАЯ"] 
-local hTitle = Instance.new("TextLabel") hTitle.Size = UDim2.new(1, 0, 0, 30) hTitle.Position = UDim2.new(0, 0, 0, 10) hTitle.BackgroundTransparency = 1 hTitle.Font = Enum.Font.GothamBold hTitle.Text = "ГЛАВНОЕ МЕНЮ [XENO]" hTitle.TextColor3 = Color3.fromRGB(255, 255, 255) hTitle.TextSize = 18 hTitle.TextXAlignment = Enum.TextXAlignment.Left hTitle.Parent = home 
+local hTitle = Instance.new("TextLabel") hTitle.Size = UDim2.new(1, 0, 0, 30) hTitle.Position = UDim2.new(0, 0, 0, 10) hTitle.BackgroundTransparency = 1 hTitle.Font = Enum.Font.GothamBold hTitle.Text = "ГЛАВНОЕ МЕНЮ [FIXED]" hTitle.TextColor3 = Color3.fromRGB(255, 255, 255) hTitle.TextSize = 18 hTitle.TextXAlignment = Enum.TextXAlignment.Left hTitle.Parent = home 
 local hCredits = Instance.new("TextLabel") hCredits.Size = UDim2.new(1, 0, 0, 40) hCredits.Position = UDim2.new(0, 0, 0, 45) hCredits.BackgroundTransparency = 1 hCredits.Font = Enum.Font.GothamSemibold hCredits.Text = "Credits:\ndiscord: harizmaang" hCredits.TextColor3 = themeColor hCredits.TextSize = 12 hCredits.TextXAlignment = Enum.TextXAlignment.Left hCredits.Parent = home 
 
 createToggle(frames["ESP"], "Включить Подсветку (ESP)", 10, "esp", function(v) espEnabled = v end) 
 createToggle(frames["ESP"], "Показывать Никнеймы", 45, nil, function(v) espShowName = v end) 
 createToggle(frames["ESP"], "Показывать Дистанцию", 80, nil, function(v) espShowDist = v end) 
-createToggle(frames["ESP"], "Показывать Роли", 115, nil, function(v) espShowRole = v end) 
+createToggle(frames["ESP"], "Показывать Команду (Роли)", 115, nil, function(v) espShowRole = v end) 
 createToggle(frames["ESP"], "Показывать Здоровье (HP)", 150, nil, function(v) espShowHp = v end) 
 
 createToggle(frames["AIMBOT"], "Включить Аимассист (FOV)", 10, "aimbot", function(v) aimbotEnabled = v end) 
@@ -357,12 +354,8 @@ createToggle(frames["FUN"], "Безопасный Ноуклип (Noclip)", 10, 
 createToggle(frames["FUN"], "Включить Спидхак", 45, nil, function(v) speedEnabled = v end) 
 createSlider(frames["FUN"], "Скорость бега", 80, 16, 150, speedValue, function(v) speedValue = v end) 
 createToggle(frames["FUN"], "Бесконечный Прыжок", 130, nil, function(v) infJumpEnabled = v end) 
-createToggle(frames["FUN"], "Включить Полет (Fly)", 165, "fly", function(v) updateFlyState(v) end) 
+createToggle(frames["FUN"], "Включить Полет (Fly)", 165, "fly", function(v) flyEnabled = v end) 
 createSlider(frames["FUN"], "Скорость полета", 200, 20, 200, flySpeed, function(v) flySpeed = v end) 
-createToggle(frames["FUN"], "Режим Невидимки (Invis)", 250, nil, function(v) updateInvisState(v) end) 
-
-local misc = frames["ПРОЧЕЕ"] 
-createToggle(misc, "Анти-Наручники", 10, nil, function(v) antiCuffs = v end) 
 
 local settingsFrame = frames["НАСТРОЙКИ"]
 createSlider(settingsFrame, "Прозрачность Меню (%)", 10, 0, 90, 0, function(v) menuTransparency = v / 100 end)
