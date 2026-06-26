@@ -1,8 +1,8 @@
--- Ультимативная защита от повторного запуска
-local coreGui = game:GetService("CoreGui")
+-- Очистка старых UI
+local success, coreGui = pcall(function() return game:GetService("CoreGui") end)
+if not success or not coreGui then coreGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+
 if coreGui:FindFirstChild("HarizmaCyberHub") then coreGui.HarizmaCyberHub:Destroy() end
-local lp = game:GetService("Players").LocalPlayer
-if lp:WaitForChild("PlayerGui"):FindFirstChild("HarizmaCyberHub") then lp.PlayerGui.HarizmaCyberHub:Destroy() end
 
 local Players = game:GetService("Players") 
 local RunService = game:GetService("RunService") 
@@ -10,6 +10,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService") 
 local Workspace = game:GetService("Workspace") 
 local camera = Workspace.CurrentCamera 
+local lp = Players.LocalPlayer
 
 -- Состояния (Глобальные флаги)
 local espEnabled, espShowName, espShowDist, espShowRole, espShowHp, espShowItem, espRgb, espFilterAdmins = false, false, false, false, false, false, false, false
@@ -18,7 +19,6 @@ local fovColor = Color3.fromRGB(0, 255, 200)
 local aimButton = Enum.UserInputType.MouseButton2
 local noclipEnabled, speedEnabled, speedValue, infJumpEnabled = false, false, 16, false
 
--- Полет (Безопасный CFrame)
 local flyEnabled, flySpeed = false, 50
 local flyDirections = {Forward = 0, Backward = 0, Left = 0, Right = 0, Up = 0, Down = 0}
 local flyConnection = nil
@@ -36,41 +36,58 @@ local registryUiToggles, currentlyBinding = {}, nil
 local ADMIN_KEYWORDS = {"admin", "mod", "owner", "creator", "dev", "spectator", "moderator", "helper"} 
 local TARGET_BLACKLIST = {["Hadkera123"] = true, ["Misha231"] = true} 
 
--- FOV Отрисовка
-local fovCircle = Drawing.new("Circle") 
-fovCircle.Visible = false fovCircle.Thickness = 1.5 fovCircle.NumSides = 64 fovCircle.Radius = fovRadius fovCircle.Filled = false fovCircle.Transparency = 0.6 
+-- Безопасная отрисовка FOV (Фикс краша на Xeno)
+local fovCircle = nil
+pcall(function()
+    if Drawing and Drawing.new then
+        fovCircle = Drawing.new("Circle") 
+        fovCircle.Visible = false 
+        fovCircle.Thickness = 1.5 
+        fovCircle.NumSides = 64 
+        fovCircle.Radius = fovRadius 
+        fovCircle.Filled = false 
+        fovCircle.Transparency = 0.6 
+    end
+end)
 
--- УЛЬТИМАТИВНЫЙ ОБХОД МЕТАТАБЛИЦЫ (Защита от сканирования памяти)
+-- Адаптивный обход метатаблиц под Xeno
 local function ultimateBypass() 
-    local success, raw = pcall(getrawmetatable, game) 
+    local getraw = getrawmetatable or getmetatable
+    local setro = setreadonly or make_writeable
+    
+    if not getraw then return end
+    
+    local success, raw = pcall(getraw, game) 
     if not success then return end 
-    setreadonly(raw, false) 
+    
+    pcall(setro, raw, false) 
     local oldNamecall = raw.__namecall 
     local oldIndex = raw.__index
      
-    raw.__namecall = newcclosure(function(self, ...) 
-        local method = getnamecallmethod() 
+    raw.__namecall = function(self, ...) 
+        local method = getnamecallmethod and getnamecallmethod() or nil
         local args = {...} 
-        if not checkcaller() then 
+        
+        if method and (not checkcaller or not checkcaller()) then 
             if (method == "FindFirstChild" or method == "IsA" or method == "GetChildren" or method == "GetDescendants" or method == "FindFirstChildOfClass") then 
                 if self == coreGui or args[1] == "XenoTestESP" or args[1] == "XenoTextTag" or args[1] == "HarizmaCyberHub" then 
                     return nil 
                 end 
             end 
-            if antiBaton and method == "FireServer" and (self.Name:lower():find("stun") or self.Name:lower():find("baton")) then 
+            if antiBaton and method == "FireServer" and type(self.Name) == "string" and (self.Name:lower():find("stun") or self.Name:lower():find("baton")) then 
                 return nil 
             end 
         end 
         return oldNamecall(self, ...) 
-    end) 
+    end
 
-    raw.__index = newcclosure(function(self, key)
-        if not checkcaller() and (key == "WalkSpeed" or key == "JumpPower") and speedEnabled then
-            return 16 -- Фейк значения для античита при попытке прочитать свойства гуманоида
+    raw.__index = function(self, key)
+        if (not checkcaller or not checkcaller()) and (key == "WalkSpeed" or key == "JumpPower") and speedEnabled then
+            return 16 
         end
         return oldIndex(self, key)
-    end)
-    setreadonly(raw, true) 
+    end
+    pcall(setro, raw, true) 
 end 
 pcall(ultimateBypass) 
 
@@ -85,9 +102,9 @@ local function isAdmin(player)
     return false 
 end 
 
--- Жесткий Анти-Куфф (Безопасный пропуск кадров)
+-- Жесткий Анти-Куфф
 task.spawn(function() 
-    while task.wait(0.1) do 
+    while task.wait(0.3) do 
         pcall(function() 
             if antiCuffs and lp.Character then 
                 for _, obj in ipairs(lp.Character:GetDescendants()) do 
@@ -111,7 +128,7 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
--- БЕЗОПАСНЫЙ ПОЛЕТ (Без создания объектов физики)
+-- Безопасный полет
 local function updateFlyState(state)
     flyEnabled = state
     if flyConnection then flyConnection:Disconnect() flyConnection = nil end
@@ -121,7 +138,7 @@ local function updateFlyState(state)
         local char = lp.Character local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
         
-        root.AssemblyLinearVelocity = Vector3.zero -- Сброс импульса падения для античита
+        root.AssemblyLinearVelocity = Vector3.zero
         
         local camLook = camera.CFrame.LookVector
         local camRight = camera.CFrame.RightVector
@@ -156,7 +173,7 @@ UserInputService.InputEnded:Connect(function(i)
     elseif i.KeyCode == Enum.KeyCode.LeftShift then flyDirections.Down = 0 end
 end)
 
--- БЕЗОПАСНАЯ НЕВИДИМКА (Local Transparency & Desync)
+-- Безопасная невидимка
 local function updateInvisState(state)
     invisibilityEnabled = state
     local char = lp.Character
@@ -169,7 +186,7 @@ local function updateInvisState(state)
     end
 end
 
--- Драг-система
+-- Драг-система (Фикс застревания интерфейса)
 local function makeDraggable(frame) 
     local dragging, dragInput, dragStart, startPos 
     frame.InputBegan:Connect(function(input) 
@@ -187,11 +204,15 @@ local function makeDraggable(frame)
     end) 
 end 
 
--- Оптимизированная ESP Система
+-- Адаптивное ESP
 local function createEspElements(character)
     if not character or character == lp.Character then return end
-    local highlight = character:FindFirstChild("XenoTestESP") or Instance.new("Highlight")
-    highlight.Name = "XenoTestESP" highlight.FillTransparency = 0.6 highlight.OutlineTransparency = 0.2 highlight.Parent = character
+    
+    -- Проверка на валидностьHighlight (некоторые сборки Xeno крашат от Highlights)
+    pcall(function()
+        local highlight = character:FindFirstChild("XenoTestESP") or Instance.new("Highlight")
+        highlight.Name = "XenoTestESP" highlight.FillTransparency = 0.6 highlight.OutlineTransparency = 0.2 highlight.Parent = character
+    end)
 
     local textTag = character:FindFirstChild("XenoTextTag") or Instance.new("BillboardGui")
     textTag.Name = "XenoTextTag" textTag.Size = UDim2.new(0, 220, 0, 90) textTag.AlwaysOnTop = true textTag.ExtentsOffset = Vector3.new(0, 3.5, 0)
@@ -208,7 +229,8 @@ RunService.RenderStepped:Connect(function()
     for _, player in ipairs(Players:GetPlayers()) do 
         local character = player.Character
         if not character or player == lp then continue end
-        local highlight, textTag = character:FindFirstChild("XenoTestESP"), character:FindFirstChild("XenoTextTag")
+        local highlight = character:FindFirstChild("XenoTestESP")
+        local textTag = character:FindFirstChild("XenoTextTag")
         local lbl = textTag and textTag:FindFirstChild("Label")
 
         if not espEnabled or (espFilterAdmins and not isAdmin(player) and not TARGET_BLACKLIST[player.Name]) then 
@@ -235,10 +257,16 @@ RunService.RenderStepped:Connect(function()
     end 
 end) 
 
--- Аимбот
+-- Аимассист
 RunService.RenderStepped:Connect(function() 
     local mouseLocation = UserInputService:GetMouseLocation() 
-    fovCircle.Position = mouseLocation fovCircle.Radius = fovRadius fovCircle.Visible = (aimbotEnabled and menuVisible) fovCircle.Color = fovRgb and currentColor or fovColor 
+    
+    if fovCircle then
+        fovCircle.Position = mouseLocation 
+        fovCircle.Radius = fovRadius 
+        fovCircle.Visible = (aimbotEnabled and menuVisible) 
+        fovCircle.Color = fovRgb and currentColor or fovColor 
+    end
 
     if aimbotEnabled and UserInputService:IsMouseButtonPressed(aimButton) then 
         local closestPlayer, shortestDistance = nil, fovRadius 
@@ -261,8 +289,7 @@ RunService.RenderStepped:Connect(function()
     end 
 end) 
 
--- Безопасный Ноуклип (Через изменение коллизий State)
-local savedCollisions = {} 
+-- Коллизии
 RunService.Stepped:Connect(function() 
     if lp.Character and noclipEnabled then 
         for _, part in ipairs(lp.Character:GetDescendants()) do 
@@ -278,7 +305,7 @@ RunService.RenderStepped:Connect(function()
     end 
 end) 
 
--- Создание UI элементов
+-- Конструктор UI
 local screenGui = Instance.new("ScreenGui") screenGui.Name = "HarizmaCyberHub" screenGui.ResetOnSpawn = false screenGui.Parent = coreGui 
 local mainHub = Instance.new("Frame") mainHub.Size = UDim2.new(0, 560, 0, 360) mainHub.Position = UDim2.new(0.3, 0, 0.25, 0) mainHub.BackgroundColor3 = Color3.fromRGB(11, 12, 16) mainHub.BorderSizePixel = 0 mainHub.Active = true mainHub.ClipsDescendants = true mainHub.Parent = screenGui 
 Instance.new("UICorner", mainHub).CornerRadius = UDim.new(0, 14) makeDraggable(mainHub) 
@@ -306,27 +333,26 @@ end
 for i, t in ipairs(tabs) do createTabButton(t, i) end 
 
 task.spawn(function()
-    while task.wait(0.1) do
+    while task.wait(0.2) do
         menuTitle.TextColor3 = themeColor mainHub.BackgroundTransparency = menuTransparency sidebar.BackgroundTransparency = menuTransparency
         for tName, btn in pairs(tabButtons) do btn.BackgroundTransparency = buttonTransparency if btn.TextColor3 ~= Color3.fromRGB(140, 145, 155) then btn.TextColor3 = themeColor end end
     end
 end)
 
--- Рендеринг компонентов
 local function createToggle(parent, text, yPos, featureId, callback) 
     local frame = Instance.new("Frame") frame.Size = UDim2.new(1, 0, 0, 36) frame.Position = UDim2.new(0, 0, 0, yPos) frame.BackgroundTransparency = 1 frame.Parent = parent 
     local lbl = Instance.new("TextLabel") lbl.Size = UDim2.new(0, 200, 1, 0) lbl.BackgroundTransparency = 1 lbl.Font = Enum.Font.GothamSemibold lbl.Text = text lbl.TextColor3 = Color3.fromRGB(225, 230, 240) lbl.TextSize = 12 lbl.TextXAlignment = Enum.TextXAlignment.Left lbl.Parent = frame 
     local btn = Instance.new("TextButton") btn.Size = UDim2.new(0, 44, 0, 22) btn.Position = UDim2.new(1, -52, 0, 7) btn.BackgroundColor3 = Color3.fromRGB(231, 76, 60) btn.Text = "" btn.Parent = frame Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 11) 
 
     local state = false 
-    local function setVisualState(targetState) state = targetState TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = state and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(231, 76, 60)}):Play() end
+    local function setVisualState(targetState) state = targetState pcall(function() TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = state and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(231, 76, 60)}):Play() end) end
     btn.MouseButton1Click:Connect(function() state = not state setVisualState(state) callback(state) end)
 
     if featureId then
         registryUiToggles[featureId] = { GetState = function() return state end, SetState = function(s) setVisualState(s) callback(s) end }
         local bindBtn = Instance.new("TextButton") bindBtn.Size = UDim2.new(0, 50, 0, 22) bindBtn.Position = UDim2.new(1, -112, 0, 7) bindBtn.BackgroundColor3 = Color3.fromRGB(25, 27, 36) bindBtn.Font = Enum.Font.GothamBold bindBtn.TextSize = 10 bindBtn.TextColor3 = Color3.fromRGB(180, 185, 195) bindBtn.Text = savedBinds[featureId] and savedBinds[featureId].Name or "None" bindBtn.Parent = frame Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 5)
         bindBtn.MouseButton1Click:Connect(function() if currentlyBinding then return end currentlyBinding = featureId bindBtn.Text = "..." end)
-        task.spawn(function() while task.wait(0.2) do if currentlyBinding ~= featureId then bindBtn.Text = savedBinds[featureId] and savedBinds[featureId].Name or "None" end end end)
+        task.spawn(function() while task.wait(0.3) do if currentlyBinding ~= featureId then bindBtn.Text = savedBinds[featureId] and savedBinds[featureId].Name or "None" end end end)
     end
 end 
 
@@ -345,12 +371,12 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     btn.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true updateValue(input) end end) 
     UserInputService.InputChanged:Connect(function(input) if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then updateValue(input) end end) 
     UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end) 
-    task.spawn(function() while task.wait(0.1) do fill.BackgroundColor3 = themeColor end end)
+    task.spawn(function() while task.wait(0.2) do fill.BackgroundColor3 = themeColor end end)
 end 
 
--- Наполнение контентом
+-- Контент страниц
 local home = frames["ГЛАВНАЯ"] 
-local hTitle = Instance.new("TextLabel") hTitle.Size = UDim2.new(1, 0, 0, 30) hTitle.Position = UDim2.new(0, 0, 0, 10) hTitle.BackgroundTransparency = 1 hTitle.Font = Enum.Font.GothamBold hTitle.Text = "ГЛАВНОЕ МЕНЮ" hTitle.TextColor3 = Color3.fromRGB(255, 255, 255) hTitle.TextSize = 18 hTitle.TextXAlignment = Enum.TextXAlignment.Left hTitle.Parent = home 
+local hTitle = Instance.new("TextLabel") hTitle.Size = UDim2.new(1, 0, 0, 30) hTitle.Position = UDim2.new(0, 0, 0, 10) hTitle.BackgroundTransparency = 1 hTitle.Font = Enum.Font.GothamBold hTitle.Text = "ГЛАВНОЕ МЕНЮ [XENO FIX]" hTitle.TextColor3 = Color3.fromRGB(255, 255, 255) hTitle.TextSize = 18 hTitle.TextXAlignment = Enum.TextXAlignment.Left hTitle.Parent = home 
 local hCredits = Instance.new("TextLabel") hCredits.Size = UDim2.new(1, 0, 0, 40) hCredits.Position = UDim2.new(0, 0, 0, 45) hCredits.BackgroundTransparency = 1 hCredits.Font = Enum.Font.GothamSemibold hCredits.Text = "Credits:\ndiscord: harizmaang" hCredits.TextColor3 = themeColor hCredits.TextSize = 12 hCredits.TextXAlignment = Enum.TextXAlignment.Left hCredits.Parent = home 
 
 createToggle(frames["ESP"], "Включить Подсветку (ESP)", 10, "esp", function(v) espEnabled = v end) 
@@ -379,7 +405,6 @@ local misc = frames["ПРОЧЕЕ"]
 createToggle(misc, "Анти-Наручники (Жесткий Обход)", 10, nil, function(v) antiCuffs = v end) 
 createToggle(misc, "Анти-Дубинка / Электрошокер", 45, nil, function(v) antiBaton = v end) 
 
--- НАСТРОЙКИ
 local settingsFrame = frames["НАСТРОЙКИ"]
 createSlider(settingsFrame, "Прозрачность Меню (%)", 10, 0, 90, 0, function(v) menuTransparency = v / 100 end)
 createSlider(settingsFrame, "Прозрачность Кнопок (%)", 60, 0, 90, 0, function(v) buttonTransparency = v / 100 end)
@@ -389,15 +414,14 @@ createSlider(settingsFrame, "Цвет: Зеленый (G)", 160, 0, 255, 255, fu
 createSlider(settingsFrame, "Цвет: Синий (B)", 210, 0, 255, 200, function(v) bVal = v themeColor = Color3.fromRGB(rVal, gVal, bVal) end)
 
 frames["ГЛАВНАЯ"].Visible = true 
-TweenService:Create(tabButtons["ГЛАВНАЯ"], TweenInfo.new(0.1), {TextColor3 = themeColor, BackgroundColor3 = Color3.fromRGB(28, 33, 45)}):Play() 
+pcall(function() TweenService:Create(tabButtons["ГЛАВНАЯ"], TweenInfo.new(0.1), {TextColor3 = themeColor, BackgroundColor3 = Color3.fromRGB(28, 33, 45)}):Play() end)
 
 local function toggleMenuState() 
     menuVisible = not menuVisible 
     local targetSize = menuVisible and UDim2.new(0, 560, 0, 360) or UDim2.new(0, 560, 0, 0) 
-    TweenService:Create(mainHub, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize}):Play() 
+    pcall(function() TweenService:Create(mainHub, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize}):Play() end)
 end 
 
--- ОБРАБОТЧИК ВВОДА КЛАВИАТУРЫ
 UserInputService.InputBegan:Connect(function(input, gp) 
     if currentlyBinding then
         if input.KeyCode == Enum.KeyCode.Escape then savedBinds[currentlyBinding] = nil else savedBinds[currentlyBinding] = input.KeyCode end
